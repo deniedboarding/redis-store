@@ -1,26 +1,21 @@
 package org.apache.catalina.session;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.net.UnknownHostException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
+import java.io.*;
+import java.text.SimpleDateFormat;
+import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.zip.DeflaterOutputStream;
+import java.util.zip.InflaterInputStream;
 
-import org.apache.catalina.Container;
-import org.apache.catalina.Loader;
-import org.apache.catalina.Session;
-import org.apache.catalina.Store;
+import org.apache.catalina.*;
 import org.apache.catalina.util.CustomObjectInputStream;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.JedisPoolConfig;
+import redis.clients.jedis.Protocol;
+import redis.clients.jedis.exceptions.JedisConnectionException;
 
 public class RedisStore extends StoreBase implements Store {
     private static final byte[] DATA_FIELD = "data".getBytes();
@@ -45,6 +40,20 @@ public class RedisStore extends StoreBase implements Store {
      * Redis database
      */
     protected static int database = 0;
+
+    /**
+     * The maximum inactive interval for Sessions in this Store.
+     */
+    protected static int maxInactiveInterval = -1;
+
+    /**
+     * Whether the serialised session should be compressed before saving in Redis.
+     */
+    protected static boolean deflate = false;
+
+    protected static SimpleDateFormat logDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+    protected static JedisPool pool;
 
     /**
      * Get the redis host
@@ -113,6 +122,47 @@ public class RedisStore extends StoreBase implements Store {
     }
 
     /**
+     * Return the maximum inactive interval (in seconds)
+     * for Sessions in this Store.
+     * Set this instead of the equivalent on the Manager to have expiration done in Redis instead of in Tomcat.
+     * This prevents Tomcat from reading sessions from Redis just to be able to expire them.
+     */
+    public static int getMaxInactiveInterval() {
+        return maxInactiveInterval;
+    }
+
+    /**
+     * Set the maximum inactive interval (in seconds)
+     * for Sessions in this Store.
+     *
+     * @param interval The new default value
+     */
+    public static void setMaxInactiveInterval(int interval) {
+        RedisStore.maxInactiveInterval = interval;
+    }
+
+    public static boolean isDeflate() {
+        return deflate;
+    }
+
+    public static void setDeflate(boolean deflate) {
+        RedisStore.deflate = deflate;
+    }
+
+    public static String getLogDateFormat() {
+        return logDateFormat.toPattern();
+    }
+
+    /**
+     * Sets format of expiry date in log messages.
+     *
+     * @param logDateFormat
+     *            The format string in the syntax accepted by {@link java.text.SimpleDateFormat}.
+     */
+    public static void setLogDateFormat(String logDateFormat) {
+        RedisStore.logDateFormat = new SimpleDateFormat(logDateFormat);
+    }
+    /**
      * Set redis database
      * 
      * @param database
@@ -122,65 +172,63 @@ public class RedisStore extends StoreBase implements Store {
         RedisStore.database = database;
     }
 
-    private Jedis getJedis() throws IOException {
-        Jedis jedis = new Jedis(getHost(), getPort());
-        try {
-            jedis.connect();
-            jedis.select(getDatabase());
-            return jedis;
-        } catch (UnknownHostException e) {
-            log.severe("Unknown redis host");
-            throw e;
-        } catch (IOException e) {
-            log.severe("Unknown redis port");
-            throw e;
-        }
-    }
-
-    private void closeJedis(Jedis jedis) throws IOException {
-        jedis.quit();
-        try {
-            jedis.disconnect();
-        } catch (IOException e) {
-            log.severe(e.getMessage());
-            throw e;
-        }
-    }
-
     public void clear() throws IOException {
-        Jedis jedis = getJedis();
-        jedis.flushDB();
-        closeJedis(jedis);
+        Jedis jedis = pool.getResource();
+        try {
+            jedis.flushDB();
+        } catch (JedisConnectionException e) {
+            pool.returnBrokenResource(jedis);
+            throw new IOException(e);
+        } finally {
+            pool.returnResource(jedis);
+        }
     }
 
     public int getSize() throws IOException {
-        int size = 0;
-        Jedis jedis = getJedis();
-        size = jedis.dbSize().intValue();
-        closeJedis(jedis);
-        return size;
+        Jedis jedis = pool.getResource();
+        try {
+            return jedis.dbSize().intValue();
+        } catch (JedisConnectionException e) {
+            pool.returnBrokenResource(jedis);
+            throw new IOException(e);
+        } finally {
+            pool.returnResource(jedis);
+        }
     }
 
     public String[] keys() throws IOException {
-        String keys[] = null;
-        Jedis jedis = getJedis();
-        Set<String> keySet = jedis.keys("*");
-        closeJedis(jedis);
-        keys = keySet.toArray(new String[keySet.size()]);
-        return keys;
+        Jedis jedis = pool.getResource();
+        try {
+            Set<String> keySet = jedis.keys("*");
+            return keySet.toArray(new String[keySet.size()]);
+        } catch (JedisConnectionException e) {
+            pool.returnBrokenResource(jedis);
+            throw new IOException(e);
+        } finally {
+            pool.returnResource(jedis);
+        }
     }
 
     public Session load(String id) throws ClassNotFoundException, IOException {
         StandardSession session = null;
         ObjectInputStream ois;
         Container container = manager.getContainer();
-        Jedis jedis = getJedis();
-        Map<byte[], byte[]> hash = jedis.hgetAll(id.getBytes());
-        closeJedis(jedis);
+        long start = System.currentTimeMillis();
+        Jedis jedis = pool.getResource();
+        Map<byte[], byte[]> hash;
+        try {
+            hash = jedis.hgetAll(id.getBytes());
+        } catch (JedisConnectionException e) {
+            pool.returnBrokenResource(jedis);
+            throw new IOException(e);
+        } finally {
+            pool.returnResource(jedis);
+        }
         if (!hash.isEmpty()) {
             try {
+                ByteArrayInputStream in = new ByteArrayInputStream(hash.get(DATA_FIELD));
                 BufferedInputStream bis = new BufferedInputStream(
-                        new ByteArrayInputStream(hash.get(DATA_FIELD)));
+                        deflate ? new InflaterInputStream(in) : in);
                 Loader loader = null;
                 if (container != null) {
                     loader = container.getLoader();
@@ -198,44 +246,97 @@ public class RedisStore extends StoreBase implements Store {
                 session.readObjectData(ois);
                 session.setManager(manager);
                 if (log.isLoggable(Level.INFO)) {
-                    log.info("Loaded session id " + id);
+                    log.info("Loaded session id " + id + " In " + (System.currentTimeMillis() - start) + " ms. Size (B): "
+                            + hash.get(DATA_FIELD).length);
                 }
             } catch (Exception ex) {
-                log.severe(ex.getMessage());
+                StringBuffer sb = new StringBuffer(ex.getMessage());
+                for(StackTraceElement frame : ex.getStackTrace()) {
+                    sb.append("\n\t");
+                    sb.append(frame.toString());
+                }
+                log.severe("Failed to load session id " + id + ": " + sb);
             }
         } else {
-            log.warning("No persisted data object found");
+            log.warning("No persisted data object found for id " + id);
         }
         return session;
     }
 
     public void remove(String id) throws IOException {
-        Jedis jedis = getJedis();
-        jedis.del(id);
-        closeJedis(jedis);
-        if (log.isLoggable(Level.INFO)) {
-            log.info("Removed session id " + id);
+        Jedis jedis = pool.getResource();
+        try {
+            jedis.del(id);
+            if (log.isLoggable(Level.INFO)) {
+                log.info("Removed session id " + id);
+            }
+        } catch (JedisConnectionException e) {
+            pool.returnBrokenResource(jedis);
+            throw new IOException(e);
+        } finally {
+            pool.returnResource(jedis);
         }
     }
 
     public void save(Session session) throws IOException {
         ObjectOutputStream oos = null;
         ByteArrayOutputStream bos = null;
+        long start = System.currentTimeMillis();
 
         Map<byte[], byte[]> hash = new HashMap<byte[], byte[]>();
         bos = new ByteArrayOutputStream();
-        oos = new ObjectOutputStream(new BufferedOutputStream(bos));
+        OutputStream os = deflate ? new DeflaterOutputStream(bos) : bos;
+
+        oos = new ObjectOutputStream(
+                new BufferedOutputStream(os));
 
         ((StandardSession) session).writeObjectData(oos);
         oos.close();
         oos = null;
         hash.put(ID_FIELD, session.getIdInternal().getBytes());
         hash.put(DATA_FIELD, bos.toByteArray());
-        Jedis jedis = getJedis();
-        jedis.hmset(session.getIdInternal().getBytes(), hash);
-        closeJedis(jedis);
-        if (log.isLoggable(Level.INFO)) {
-            log.info("Saved session with id " + session.getIdInternal());
+        Jedis jedis = pool.getResource();
+        try {
+            jedis.hmset(session.getIdInternal().getBytes(), hash);
+            if (maxInactiveInterval > -1) {
+                long expireAt = ((StandardSession) session).thisAccessedTime / 1000L + maxInactiveInterval;
+                jedis.expireAt(session.getIdInternal().getBytes(), expireAt);
+                if (log.isLoggable(Level.INFO)) {
+                    log.info("Expire session with id " + session.getIdInternal() + " at: "
+                            + logDateFormat.format(new Date(expireAt * 1000L)));
+                }
+            }
+        } catch (JedisConnectionException e) {
+            pool.returnBrokenResource(jedis);
+            throw new IOException(e);
+        } finally {
+            pool.returnResource(jedis);
         }
+        if (log.isLoggable(Level.INFO)) {
+            log.info("Saved session with id " + session.getIdInternal() + " In " +
+                    (System.currentTimeMillis() - start) +
+                    " ms. Size (B): "
+                    + hash.get(DATA_FIELD).length);
+        }
+    }
+
+    @Override
+    public void processExpires() {
+        // Expiring in Redis is the problem of Redis if maxInactiveInterval is set, so in that case I do nothing here.
+        if (maxInactiveInterval == -1) {
+            super.processExpires();
+        }
+    }
+
+    @Override
+    public void start() throws LifecycleException {
+        super.start();
+        pool = new JedisPool(new JedisPoolConfig(), getHost(), getPort(), Protocol.DEFAULT_TIMEOUT, null, getDatabase());
+    }
+
+    @Override
+    public void stop() throws LifecycleException {
+        super.stop();
+        pool.destroy();
     }
 }
