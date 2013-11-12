@@ -15,6 +15,8 @@ You must copy the jar into the lib folder of your tomcat installation directory,
     		port="6379"
     		password="something"
     		database="0"
+    		maxInactiveInterval="1800"
+    		deflate="true"
     	/>
     </Manager>
 	
