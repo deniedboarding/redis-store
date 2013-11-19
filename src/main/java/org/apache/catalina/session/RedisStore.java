@@ -51,6 +51,11 @@ public class RedisStore extends StoreBase implements Store {
      */
     protected static boolean deflate = false;
 
+    /**
+     * Size limit in bytes under which sessions are considered empty and thus not saved. Defaults to 300.
+     */
+    protected static int sessionEmptyLimit = 300;
+
     protected static SimpleDateFormat logDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
     protected static JedisPool pool;
@@ -162,6 +167,20 @@ public class RedisStore extends StoreBase implements Store {
     public static void setLogDateFormat(String logDateFormat) {
         RedisStore.logDateFormat = new SimpleDateFormat(logDateFormat);
     }
+
+    public static int getSessionEmptyLimit() {
+        return sessionEmptyLimit;
+    }
+
+    /**
+     *
+     * @param sessionEmptyLimit
+     *          The limit in bytes below which a serialised session is considered empty
+     */
+    public static void setSessionEmptyLimit(int sessionEmptyLimit) {
+        RedisStore.sessionEmptyLimit = sessionEmptyLimit;
+    }
+
     /**
      * Set redis database
      * 
@@ -293,6 +312,11 @@ public class RedisStore extends StoreBase implements Store {
         ((StandardSession) session).writeObjectData(oos);
         oos.close();
         oos = null;
+        if (bos.size() < sessionEmptyLimit) {
+            log.info("Session with id " + session.getIdInternal() + " not saved since its size ("
+                    + bos.size() + "B) is below sessionEmptyLimit");
+            return;
+        }
         hash.put(ID_FIELD, session.getIdInternal().getBytes());
         hash.put(DATA_FIELD, bos.toByteArray());
         Jedis jedis = pool.getResource();
@@ -316,7 +340,7 @@ public class RedisStore extends StoreBase implements Store {
             log.info("Saved session with id " + session.getIdInternal() + " In " +
                     (System.currentTimeMillis() - start) +
                     " ms. Size (B): "
-                    + hash.get(DATA_FIELD).length);
+                    + bos.size());
         }
     }
 
