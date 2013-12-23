@@ -197,9 +197,11 @@ public class RedisStore extends StoreBase implements Store {
             jedis.flushDB();
         } catch (JedisConnectionException e) {
             pool.returnBrokenResource(jedis);
+            jedis = null;
             throw new IOException(e);
         } finally {
-            pool.returnResource(jedis);
+            if (jedis != null)
+                pool.returnResource(jedis);
         }
     }
 
@@ -209,9 +211,11 @@ public class RedisStore extends StoreBase implements Store {
             return jedis.dbSize().intValue();
         } catch (JedisConnectionException e) {
             pool.returnBrokenResource(jedis);
+            jedis = null;
             throw new IOException(e);
         } finally {
-            pool.returnResource(jedis);
+            if (jedis != null)
+                pool.returnResource(jedis);
         }
     }
 
@@ -222,9 +226,11 @@ public class RedisStore extends StoreBase implements Store {
             return keySet.toArray(new String[keySet.size()]);
         } catch (JedisConnectionException e) {
             pool.returnBrokenResource(jedis);
+            jedis = null;
             throw new IOException(e);
         } finally {
-            pool.returnResource(jedis);
+            if (jedis != null)
+                pool.returnResource(jedis);
         }
     }
 
@@ -239,9 +245,11 @@ public class RedisStore extends StoreBase implements Store {
             hash = jedis.hgetAll(id.getBytes());
         } catch (JedisConnectionException e) {
             pool.returnBrokenResource(jedis);
+            jedis = null;
             throw new IOException(e);
         } finally {
-            pool.returnResource(jedis);
+            if (jedis != null)
+                pool.returnResource(jedis);
         }
         if (!hash.isEmpty()) {
             try {
@@ -264,6 +272,9 @@ public class RedisStore extends StoreBase implements Store {
                 session = (StandardSession) manager.createEmptySession();
                 session.readObjectData(ois);
                 session.setManager(manager);
+                // Not strictly true, but without it we seem to sometimes reach a race condition where a session is
+                // swapped out by PersistentManagerBase.processMaxIdleBackups before session.access() is called.
+                session.setCreationTime(System.currentTimeMillis());
                 if (log.isLoggable(Level.INFO)) {
                     log.info("Loaded session id " + id + " In " + (System.currentTimeMillis() - start) + " ms. Size (B): "
                             + hash.get(DATA_FIELD).length);
@@ -291,9 +302,11 @@ public class RedisStore extends StoreBase implements Store {
             }
         } catch (JedisConnectionException e) {
             pool.returnBrokenResource(jedis);
+            jedis = null;
             throw new IOException(e);
         } finally {
-            pool.returnResource(jedis);
+            if (jedis != null)
+                pool.returnResource(jedis);
         }
     }
 
@@ -332,9 +345,11 @@ public class RedisStore extends StoreBase implements Store {
             }
         } catch (JedisConnectionException e) {
             pool.returnBrokenResource(jedis);
+            jedis = null;
             throw new IOException(e);
         } finally {
-            pool.returnResource(jedis);
+            if (jedis != null)
+                pool.returnResource(jedis);
         }
         if (log.isLoggable(Level.INFO)) {
             log.info("Saved session with id " + session.getIdInternal() + " In " +
@@ -355,7 +370,10 @@ public class RedisStore extends StoreBase implements Store {
     @Override
     public void start() throws LifecycleException {
         super.start();
-        pool = new JedisPool(new JedisPoolConfig(), getHost(), getPort(), Protocol.DEFAULT_TIMEOUT, null, getDatabase());
+        JedisPoolConfig poolConfig = new JedisPoolConfig();
+        poolConfig.setMinEvictableIdleTimeMillis(2000);
+        poolConfig.setTimeBetweenEvictionRunsMillis(10000);
+        pool = new JedisPool(poolConfig, getHost(), getPort(), Protocol.DEFAULT_TIMEOUT, null, getDatabase());
     }
 
     @Override
