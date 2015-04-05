@@ -22,15 +22,17 @@ public class SaveBenchmark {
      */
     public static void main(String[] args) throws IOException {
         Logger.getLogger("RedisStore").setLevel(Level.OFF);
+
         String info = new String(new byte[30000]);
-        RedisStore.setDatabase(0);
-        RedisStore.setHost("localhost");
-        RedisStore.setPassword("foobared");
-        RedisStore.setPort(Protocol.DEFAULT_PORT);
+        RedisStore rs = new RedisStore();
+        rs.setDatabase(0);
+        rs.setHost("localhost");
+        rs.setPassword("foobared");
+        rs.setPort(Protocol.DEFAULT_PORT);
 
         PersistentManager manager = new PersistentManager();
         manager.setContainer(new StandardContext());
-        RedisStore rs = new RedisStore();
+
         rs.setManager(manager);
 
         long begin = Calendar.getInstance().getTimeInMillis();

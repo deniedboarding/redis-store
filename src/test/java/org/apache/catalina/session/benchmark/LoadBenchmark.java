@@ -24,14 +24,15 @@ public class LoadBenchmark {
     public static void main(String[] args) throws IOException,
             ClassNotFoundException {
         Logger.getLogger("RedisStore").setLevel(Level.OFF);
-        RedisStore.setDatabase(0);
-        RedisStore.setHost("localhost");
-        RedisStore.setPassword("foobared");
-        RedisStore.setPort(Protocol.DEFAULT_PORT);
+
+        RedisStore rs = new RedisStore();
+        rs.setDatabase(0);
+        rs.setHost("localhost");
+        rs.setPassword("foobared");
+        rs.setPort(Protocol.DEFAULT_PORT);
 
         PersistentManager manager = new PersistentManager();
         manager.setContainer(new StandardContext());
-        RedisStore rs = new RedisStore();
         rs.setManager(manager);
 
         Session session = manager.createSession(null);

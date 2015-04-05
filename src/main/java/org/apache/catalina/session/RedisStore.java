@@ -1,379 +1,317 @@
 package org.apache.catalina.session;
 
-import java.io.*;
-import java.text.SimpleDateFormat;
-import java.util.*;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-import java.util.zip.DeflaterOutputStream;
-import java.util.zip.InflaterInputStream;
-
-import org.apache.catalina.*;
-import org.apache.catalina.util.CustomObjectInputStream;
-
+import org.apache.catalina.LifecycleException;
+import org.apache.catalina.Manager;
+import org.apache.catalina.Session;
+import org.apache.catalina.Store;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 import redis.clients.jedis.Protocol;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
+import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Map;
+import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 public class RedisStore extends StoreBase implements Store {
-    private static final byte[] DATA_FIELD = "data".getBytes();
-    private static final byte[] ID_FIELD = "id".getBytes();
-    private static Logger log = Logger.getLogger("RedisStore");
-    /**
-     * Redis Host
-     */
-    protected static String host = "localhost";
 
-    /**
-     * Redis Port
-     */
-    protected static int port = 6379;
+	public static final byte[] DATA_FIELD = "data".getBytes();
+	public static final byte[] ID_FIELD = "id".getBytes();
 
-    /**
-     * Redis Password
-     */
-    protected static String password;
+	private static final Logger log = Logger.getLogger("RedisStore");
 
-    /**
-     * Redis database
-     */
-    protected static int database = 0;
+	/**
+	 * Redis Host
+	 */
+	private volatile String host = "localhost";
+	/**
+	 * Redis Port
+	 */
+	private volatile int port = 6379;
+	/**
+	 * Redis Password
+	 */
+	private volatile String password;
+	/**
+	 * Redis database
+	 */
+	private volatile int database = 0;
+	/**
+	 * Redis pool size
+	 */
+	private volatile int connectionPoolSize = -1;
+	/**
+	 * Date format for logging dates
+	 */
+	private volatile SimpleDateFormat expireDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+	/**
+	 * Helper for serializing/deserializing
+	 */
+	private volatile SessionSerializationHelper sessionSerializationHelper;
+	/**
+	 * The jedis pool
+	 */
+	private volatile JedisPool pool;
+	/**
+	 * Template helper for handling of the jedis connections
+	 */
+	private volatile JedisTemplate jedisTemplate;
+	/**
+	 * The maximum inactive interval for Sessions in this Store.
+	 */
+	private volatile int maxInactiveInterval = -1;
+	/**
+	 * Whether the serialised session should be compressed before saving in Redis.
+	 */
+	private volatile boolean deflate = false;
+	/**
+	 * Size limit in bytes under which sessions are considered empty and thus not saved. Defaults to 300.
+	 */
+	private volatile int sessionEmptyLimit = 300;
 
-    /**
-     * The maximum inactive interval for Sessions in this Store.
-     */
-    protected static int maxInactiveInterval = -1;
+	/**
+	 * Return the maximum inactive interval (in seconds)
+	 * for Sessions in this Store.
+	 * Set this instead of the equivalent on the Manager to have expiration done in Redis instead of in Tomcat.
+	 * This prevents Tomcat from reading sessions from Redis just to be able to expire them.
+	 */
+	public int getMaxInactiveInterval() {
+		return this.maxInactiveInterval;
+	}
 
-    /**
-     * Whether the serialised session should be compressed before saving in Redis.
-     */
-    protected static boolean deflate = false;
+	/**
+	 * Set the maximum inactive interval (in seconds)
+	 * for Sessions in this Store.
+	 *
+	 * @param interval The new default value
+	 */
+	public void setMaxInactiveInterval(int interval) {
+		this.maxInactiveInterval = interval;
+	}
 
-    /**
-     * Size limit in bytes under which sessions are considered empty and thus not saved. Defaults to 300.
-     */
-    protected static int sessionEmptyLimit = 300;
+	/**
+	 * Set whether the serialised session should be compressed before saving in Redis.
+	 *
+	 * @param deflate If persisted session should be compressed
+	 */
+	public void setDeflate(boolean deflate) {
+		this.deflate = deflate;
+	}
 
-    protected static SimpleDateFormat logDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+	/**
+	 * @param sessionEmptyLimit The limit in bytes below which a serialised session is considered empty
+	 */
+	public void setSessionEmptyLimit(int sessionEmptyLimit) {
+		this.sessionEmptyLimit = sessionEmptyLimit;
+	}
 
-    protected static JedisPool pool;
+	public void setDatabase(int database) {
+		this.database = database;
+	}
 
-    /**
-     * Get the redis host
-     * 
-     * @return host
-     */
-    public static String getHost() {
-        return host;
-    }
+	public void setHost(String host) {
+		this.host = host;
+	}
 
-    /**
-     * Set redis host
-     * 
-     * @param host
-     *            Redis host
-     */
-    public static void setHost(String host) {
-        RedisStore.host = host;
-    }
+	public void setPort(int port) {
+		this.port = port;
+	}
 
-    /**
-     * Get redis port. Defaults to 6379.
-     * 
-     * @return port
-     */
-    public static int getPort() {
-        return port;
-    }
+	public void setPassword(String password) {
+		this.password = password;
+	}
 
-    /**
-     * Set redis port
-     * 
-     * @param port
-     *            Redis port
-     */
-    public static void setPort(int port) {
-        RedisStore.port = port;
-    }
+	public void setConnectionPoolSize(int connectionPoolSize) {
+		this.connectionPoolSize = connectionPoolSize;
+	}
 
-    /**
-     * Get redis password
-     * 
-     * @return password
-     */
-    public static String getPassword() {
-        return password;
-    }
+	public void setPool(JedisPool pool) {
+		this.pool = pool;
+	}
 
-    /**
-     * Set redis password
-     * 
-     * @param password
-     *            Redis password
-     */
-    public static void setPassword(String password) {
-        RedisStore.password = password;
-    }
+	public void setExpireDateFormat(SimpleDateFormat expireDateFormat) {
+		this.expireDateFormat = expireDateFormat;
+	}
 
-    /**
-     * Get redis database
-     * 
-     * @return Redis database
-     */
-    public static int getDatabase() {
-        return database;
-    }
+	public void setJedisTemplate(JedisTemplate jedisTemplate) {
+		this.jedisTemplate = jedisTemplate;
+	}
 
-    /**
-     * Return the maximum inactive interval (in seconds)
-     * for Sessions in this Store.
-     * Set this instead of the equivalent on the Manager to have expiration done in Redis instead of in Tomcat.
-     * This prevents Tomcat from reading sessions from Redis just to be able to expire them.
-     */
-    public static int getMaxInactiveInterval() {
-        return maxInactiveInterval;
-    }
+	public void setSessionSerializationHelper(SessionSerializationHelper sessionSerializationHelper) {
+		this.sessionSerializationHelper = sessionSerializationHelper;
+	}
 
-    /**
-     * Set the maximum inactive interval (in seconds)
-     * for Sessions in this Store.
-     *
-     * @param interval The new default value
-     */
-    public static void setMaxInactiveInterval(int interval) {
-        RedisStore.maxInactiveInterval = interval;
-    }
+	@Override
+	public void setManager(final Manager manager) {
+		this.manager = manager;
+		this.sessionSerializationHelper = new SessionSerializationHelper(manager);
+		this.sessionSerializationHelper.setDeflate(deflate);
+	}
 
-    public static boolean isDeflate() {
-        return deflate;
-    }
+	@Override
+	public void clear() throws IOException {
+		try {
+			jedisTemplate.withJedis(new JedisTemplate.JedisOperation<Void>() {
+				@Override
+				public Void invoke(Jedis jedis) {
+					jedis.flushDB();
+					return null;
+				}
+			});
+		} catch (JedisConnectionException e) {
+			throw new IOException(e);
+		}
+	}
 
-    public static void setDeflate(boolean deflate) {
-        RedisStore.deflate = deflate;
-    }
+	@Override
+	public int getSize() throws IOException {
+		try {
+			return jedisTemplate.withJedis(new JedisTemplate.JedisOperation<Integer>() {
+				@Override
+				public Integer invoke(Jedis jedis) {
+					return jedis.dbSize().intValue();
+				}
+			});
+		} catch (JedisConnectionException e) {
+			throw new IOException(e);
+		}
+	}
 
-    public static String getLogDateFormat() {
-        return logDateFormat.toPattern();
-    }
+	@Override
+	public String[] keys() throws IOException {
+		try {
+			return jedisTemplate.withJedis(new JedisTemplate.JedisOperation<String[]>() {
+				@Override
+				public String[] invoke(Jedis jedis) {
+					Set<String> keySet = jedis.keys("*");
+					return keySet.toArray(new String[keySet.size()]);
+				}
+			});
+		} catch (JedisConnectionException e) {
+			throw new IOException(e);
+		}
+	}
 
-    /**
-     * Sets format of expiry date in log messages.
-     *
-     * @param logDateFormat
-     *            The format string in the syntax accepted by {@link java.text.SimpleDateFormat}.
-     */
-    public static void setLogDateFormat(String logDateFormat) {
-        RedisStore.logDateFormat = new SimpleDateFormat(logDateFormat);
-    }
+	@Override
+	public Session load(final String id) throws ClassNotFoundException, IOException {
+		final long start = System.currentTimeMillis();
 
-    public static int getSessionEmptyLimit() {
-        return sessionEmptyLimit;
-    }
+		try {
+			return jedisTemplate.withJedis(new JedisTemplate.JedisOperation<Session>() {
+				@Override
+				public Session invoke(Jedis jedis) {
+					Map<byte[], byte[]> hash = jedis.hgetAll(id.getBytes());
+					try {
+						Session session = sessionSerializationHelper.deserialize(hash.get(DATA_FIELD));
 
-    /**
-     *
-     * @param sessionEmptyLimit
-     *          The limit in bytes below which a serialised session is considered empty
-     */
-    public static void setSessionEmptyLimit(int sessionEmptyLimit) {
-        RedisStore.sessionEmptyLimit = sessionEmptyLimit;
-    }
+						log.info(String.format("Loaded session id %s In %d ms. Size (B): %d",
+								id,
+								System.currentTimeMillis() - start,
+								hash.get(DATA_FIELD).length));
 
-    /**
-     * Set redis database
-     * 
-     * @param database
-     *            Redis database. Defaults to 0.
-     */
-    public static void setDatabase(int database) {
-        RedisStore.database = database;
-    }
+						return session;
+					} catch (ClassNotFoundException | IOException e) {
+						log.log(Level.SEVERE, "Failed to deserialize session id " + id, e);
+						return manager.createSession(id);
+					}
+				}
+			});
+		} catch (JedisConnectionException e) {
+			log.log(Level.SEVERE, "Failed to load session id " + id, e);
+			return manager.createSession(id);
+		}
+	}
 
-    public void clear() throws IOException {
-        Jedis jedis = pool.getResource();
-        try {
-            jedis.flushDB();
-        } catch (JedisConnectionException e) {
-            pool.returnBrokenResource(jedis);
-            jedis = null;
-            throw new IOException(e);
-        } finally {
-            if (jedis != null)
-                pool.returnResource(jedis);
-        }
-    }
+	@Override
+	public void remove(final String id) throws IOException {
+		jedisTemplate.withJedis(new JedisTemplate.JedisOperation<Void>() {
+			@Override
+			public Void invoke(Jedis jedis) {
+				jedis.del(id);
+				log.info("Removed session id " + id);
+				return null;
+			}
+		});
+	}
 
-    public int getSize() throws IOException {
-        Jedis jedis = pool.getResource();
-        try {
-            return jedis.dbSize().intValue();
-        } catch (JedisConnectionException e) {
-            pool.returnBrokenResource(jedis);
-            jedis = null;
-            throw new IOException(e);
-        } finally {
-            if (jedis != null)
-                pool.returnResource(jedis);
-        }
-    }
+	@Override
+	public void save(final Session session) throws IOException {
+		long start = System.currentTimeMillis();
 
-    public String[] keys() throws IOException {
-        Jedis jedis = pool.getResource();
-        try {
-            Set<String> keySet = jedis.keys("*");
-            return keySet.toArray(new String[keySet.size()]);
-        } catch (JedisConnectionException e) {
-            pool.returnBrokenResource(jedis);
-            jedis = null;
-            throw new IOException(e);
-        } finally {
-            if (jedis != null)
-                pool.returnResource(jedis);
-        }
-    }
+		final Map<byte[], byte[]> hash = sessionSerializationHelper.serialize(session);
 
-    public Session load(String id) throws ClassNotFoundException, IOException {
-        StandardSession session = null;
-        ObjectInputStream ois;
-        Container container = manager.getContainer();
-        long start = System.currentTimeMillis();
-        Jedis jedis = pool.getResource();
-        Map<byte[], byte[]> hash;
-        try {
-            hash = jedis.hgetAll(id.getBytes());
-        } catch (JedisConnectionException e) {
-            pool.returnBrokenResource(jedis);
-            jedis = null;
-            throw new IOException(e);
-        } finally {
-            if (jedis != null)
-                pool.returnResource(jedis);
-        }
-        if (!hash.isEmpty()) {
-            try {
-                ByteArrayInputStream in = new ByteArrayInputStream(hash.get(DATA_FIELD));
-                BufferedInputStream bis = new BufferedInputStream(
-                        deflate ? new InflaterInputStream(in) : in);
+		int sessionSize = hash.get(DATA_FIELD).length;
+		if (sessionSize < sessionEmptyLimit) {
+			log.info(String.format("Session with id %s not saved since its size (%d B) is below sessionEmptyLimit",
+					session.getIdInternal(),
+					sessionSize));
+			return;
+		}
 
-                if (manager.getContext() != null &&
-                        manager.getContext().getLoader() != null &&
-                        manager.getContext().getLoader().getClassLoader() != null) {
-                    ois = new CustomObjectInputStream(bis, manager.getContext().getLoader().getClassLoader());
-                } else {
-                    ois = new ObjectInputStream(bis);
-                }
-                session = (StandardSession) manager.createEmptySession();
-                session.readObjectData(ois);
-                session.setManager(manager);
-                // Not strictly true, but without it we seem to sometimes reach a race condition where a session is
-                // swapped out by PersistentManagerBase.processMaxIdleBackups before session.access() is called.
-                session.setCreationTime(System.currentTimeMillis());
-                if (log.isLoggable(Level.INFO)) {
-                    log.info("Loaded session id " + id + " In " + (System.currentTimeMillis() - start) + " ms. Size (B): "
-                            + hash.get(DATA_FIELD).length);
-                }
-            } catch (Exception ex) {
-                StringBuffer sb = new StringBuffer(ex.getMessage());
-                for(StackTraceElement frame : ex.getStackTrace()) {
-                    sb.append("\n\t");
-                    sb.append(frame.toString());
-                }
-                log.severe("Failed to load session id " + id + ": " + sb);
-            }
-        } else {
-            log.warning("No persisted data object found for id " + id);
-        }
-        return session;
-    }
+		try {
+			jedisTemplate.withJedis(new JedisTemplate.JedisOperation<Void>() {
+				@Override
+				public Void invoke(Jedis jedis) {
+					jedis.hmset(session.getIdInternal().getBytes(), hash);
 
-    public void remove(String id) throws IOException {
-        Jedis jedis = pool.getResource();
-        try {
-            jedis.del(id);
-            if (log.isLoggable(Level.INFO)) {
-                log.info("Removed session id " + id);
-            }
-        } catch (JedisConnectionException e) {
-            pool.returnBrokenResource(jedis);
-            jedis = null;
-            throw new IOException(e);
-        } finally {
-            if (jedis != null)
-                pool.returnResource(jedis);
-        }
-    }
+					if (maxInactiveInterval > -1) {
+						setRedisSessionExpire(session, jedis);
+					}
+					return null;
+				}
+			});
 
-    public void save(Session session) throws IOException {
-        ObjectOutputStream oos = null;
-        ByteArrayOutputStream bos = null;
-        long start = System.currentTimeMillis();
+			log.info(String.format("Saved session with id %s In %d ms. Size: %d B",
+					session.getIdInternal(),
+					System.currentTimeMillis() - start,
+					sessionSize));
 
-        Map<byte[], byte[]> hash = new HashMap<byte[], byte[]>();
-        bos = new ByteArrayOutputStream();
-        OutputStream os = deflate ? new DeflaterOutputStream(bos) : bos;
+		} catch (JedisConnectionException e) {
+			log.log(Level.SEVERE, String.format("Unable to save session %s", session.getIdInternal()), e);
+		}
+	}
 
-        oos = new ObjectOutputStream(
-                new BufferedOutputStream(os));
+	@Override
+	public void processExpires() {
+		// Expiring in Redis is the problem of Redis if maxInactiveInterval is set, so in that case I do nothing here.
+		if (maxInactiveInterval == -1) {
+			super.processExpires();
+		}
+	}
 
-        ((StandardSession) session).writeObjectData(oos);
-        oos.close();
-        oos = null;
-        if (bos.size() < sessionEmptyLimit) {
-            log.info("Session with id " + session.getIdInternal() + " not saved since its size ("
-                    + bos.size() + "B) is below sessionEmptyLimit");
-            return;
-        }
-        hash.put(ID_FIELD, session.getIdInternal().getBytes());
-        hash.put(DATA_FIELD, bos.toByteArray());
-        Jedis jedis = pool.getResource();
-        try {
-            jedis.hmset(session.getIdInternal().getBytes(), hash);
-            if (maxInactiveInterval > -1) {
-                long expireAt = ((StandardSession) session).thisAccessedTime / 1000L + maxInactiveInterval;
-                jedis.expireAt(session.getIdInternal().getBytes(), expireAt);
-                if (log.isLoggable(Level.INFO)) {
-                    log.info("Expire session with id " + session.getIdInternal() + " at: "
-                            + logDateFormat.format(new Date(expireAt * 1000L)));
-                }
-            }
-        } catch (JedisConnectionException e) {
-            pool.returnBrokenResource(jedis);
-            jedis = null;
-            throw new IOException(e);
-        } finally {
-            if (jedis != null)
-                pool.returnResource(jedis);
-        }
-        if (log.isLoggable(Level.INFO)) {
-            log.info("Saved session with id " + session.getIdInternal() + " In " +
-                    (System.currentTimeMillis() - start) +
-                    " ms. Size (B): "
-                    + bos.size());
-        }
-    }
+	@Override
+	public synchronized void startInternal() throws LifecycleException {
+		super.startInternal();
+		if (pool == null) {
+			JedisPoolConfig poolConfig = new JedisPoolConfig();
+			poolConfig.setMaxTotal(this.connectionPoolSize);
+			poolConfig.setMinEvictableIdleTimeMillis(2000);
+			poolConfig.setTimeBetweenEvictionRunsMillis(10000);
 
-    @Override
-    public void processExpires() {
-        // Expiring in Redis is the problem of Redis if maxInactiveInterval is set, so in that case I do nothing here.
-        if (maxInactiveInterval == -1) {
-            super.processExpires();
-        }
-    }
+			pool = new JedisPool(poolConfig, host, port, Protocol.DEFAULT_TIMEOUT, password, database);
 
-    @Override
-    protected synchronized void startInternal() throws LifecycleException {
-        super.startInternal();
-        JedisPoolConfig poolConfig = new JedisPoolConfig();
-        poolConfig.setMinEvictableIdleTimeMillis(2000);
-        poolConfig.setTimeBetweenEvictionRunsMillis(10000);
-        pool = new JedisPool(poolConfig, getHost(), getPort(), Protocol.DEFAULT_TIMEOUT, null, getDatabase());
-    }
+			jedisTemplate = new JedisTemplate(pool);
+		}
+	}
 
-    @Override
-    protected synchronized void stopInternal() throws LifecycleException {
-        super.stopInternal();
-        pool.destroy();
-    }
+	@Override
+	protected synchronized void stopInternal() throws LifecycleException {
+		super.stopInternal();
+		if (pool != null) {
+			pool.destroy();
+		}
+	}
+
+	private void setRedisSessionExpire(Session session, Jedis jedis) {
+		long expireAt = ((StandardSession) session).thisAccessedTime / 1000L + maxInactiveInterval;
+		jedis.expireAt(session.getIdInternal().getBytes(), expireAt);
+		log.info(String.format("Expire session with id %s at: %s",
+				session.getIdInternal(),
+				expireDateFormat.format(new Date(expireAt * 1000L))));
+	}
 }
