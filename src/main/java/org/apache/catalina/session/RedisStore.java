@@ -256,16 +256,11 @@ public class RedisStore extends StoreBase implements Store {
                 ByteArrayInputStream in = new ByteArrayInputStream(hash.get(DATA_FIELD));
                 BufferedInputStream bis = new BufferedInputStream(
                         deflate ? new InflaterInputStream(in) : in);
-                Loader loader = null;
-                if (container != null) {
-                    loader = container.getLoader();
-                }
-                ClassLoader classLoader = null;
-                if (loader != null) {
-                    classLoader = loader.getClassLoader();
-                }
-                if (classLoader != null) {
-                    ois = new CustomObjectInputStream(bis, classLoader);
+
+                if (manager.getContext() != null &&
+                        manager.getContext().getLoader() != null &&
+                        manager.getContext().getLoader().getClassLoader() != null) {
+                    ois = new CustomObjectInputStream(bis, manager.getContext().getLoader().getClassLoader());
                 } else {
                     ois = new ObjectInputStream(bis);
                 }
@@ -368,8 +363,8 @@ public class RedisStore extends StoreBase implements Store {
     }
 
     @Override
-    public void start() throws LifecycleException {
-        super.start();
+    protected synchronized void startInternal() throws LifecycleException {
+        super.startInternal();
         JedisPoolConfig poolConfig = new JedisPoolConfig();
         poolConfig.setMinEvictableIdleTimeMillis(2000);
         poolConfig.setTimeBetweenEvictionRunsMillis(10000);
@@ -377,8 +372,8 @@ public class RedisStore extends StoreBase implements Store {
     }
 
     @Override
-    public void stop() throws LifecycleException {
-        super.stop();
+    protected synchronized void stopInternal() throws LifecycleException {
+        super.stopInternal();
         pool.destroy();
     }
 }

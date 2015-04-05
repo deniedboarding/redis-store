@@ -11,6 +11,7 @@ import org.apache.catalina.core.StandardContext;
 import org.apache.catalina.session.PersistentManager;
 import org.apache.catalina.session.RedisStore;
 import org.apache.catalina.session.StandardSession;
+import org.apache.catalina.util.StandardSessionIdGenerator;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -31,6 +32,7 @@ public class RedisStoreTest extends Assert {
 
         manager = new PersistentManager();
         manager.setContainer(new StandardContext());
+        manager.setSessionIdGenerator(new StandardSessionIdGenerator());
         rs = new RedisStore();
         rs.setManager(manager);
     }
