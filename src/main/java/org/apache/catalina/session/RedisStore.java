@@ -247,7 +247,13 @@ public class RedisStore extends StoreBase implements Store {
 	public void save(final Session session) throws IOException {
 		long start = System.currentTimeMillis();
 
-		final Map<byte[], byte[]> hash = sessionSerializationHelper.serialize(session);
+		final Map<byte[], byte[]> hash;
+		try {
+			hash = sessionSerializationHelper.serialize(session);
+		} catch (IOException e) {
+			log.log(Level.SEVERE, String.format("Unable to save session %s", session.getIdInternal()), e);
+			return;
+		}
 
 		int sessionSize = hash.get(DATA_FIELD).length;
 		if (sessionSize < sessionEmptyLimit) {
