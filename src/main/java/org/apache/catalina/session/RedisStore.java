@@ -209,10 +209,14 @@ public class RedisStore extends StoreBase implements Store {
 					try {
 						Session session = sessionSerializationHelper.deserialize(hash.get(DATA_FIELD));
 
-						log.info(String.format("Loaded session id %s In %d ms. Size (B): %d",
-								id,
-								System.currentTimeMillis() - start,
-								hash.get(DATA_FIELD).length));
+						if (session != null) {
+							log.info(String.format("Loaded session id %s In %d ms. Size (B): %d",
+									id,
+									System.currentTimeMillis() - start,
+									hash.get(DATA_FIELD).length));
+						} else {
+							log.info(String.format("no session found to load for id %s", id));
+						}
 
 						return session;
 					} catch (ClassNotFoundException | IOException e) {
