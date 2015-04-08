@@ -257,7 +257,7 @@ public class RedisStore extends StoreBase implements Store {
 
 		int sessionSize = hash.get(DATA_FIELD).length;
 		if (sessionSize < sessionEmptyLimit) {
-			log.info(String.format("Session with id %s not saved since its size (%d B) is below sessionEmptyLimit",
+			log.log(Level.FINE, String.format("Session with id %s not saved since its size (%d B) is below sessionEmptyLimit",
 					session.getIdInternal(),
 					sessionSize));
 			return;
