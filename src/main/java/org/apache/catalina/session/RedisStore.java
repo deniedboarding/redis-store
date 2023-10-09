@@ -15,15 +15,16 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Map;
 import java.util.Set;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class RedisStore extends StoreBase implements Store {
 
 	public static final byte[] DATA_FIELD = "data".getBytes();
 	public static final byte[] ID_FIELD = "id".getBytes();
 
-	private static final Logger log = Logger.getLogger("RedisStore");
+	private final Logger logger = LoggerFactory.getLogger(getClass());
 
 	/**
 	 * Redis Host
@@ -210,23 +211,23 @@ public class RedisStore extends StoreBase implements Store {
 						Session session = sessionSerializationHelper.deserialize(hash.get(DATA_FIELD));
 
 						if (session != null) {
-							log.info(String.format("Loaded session id %s In %d ms. Size (B): %d",
+							logger.info(String.format("Loaded session id %s In %d ms. Size (B): %d",
 									id,
 									System.currentTimeMillis() - start,
 									hash.get(DATA_FIELD).length));
 						} else {
-							log.info(String.format("no session found to load for id %s", id));
+							logger.info(String.format("no session found to load for id %s", id));
 						}
 
 						return session;
 					} catch (ClassNotFoundException | IOException e) {
-						log.log(Level.SEVERE, "Failed to deserialize session id " + id, e);
+						logger.error( "Failed to deserialize session id " + id, e);
 						return manager.createSession(id);
 					}
 				}
 			});
 		} catch (JedisConnectionException e) {
-			log.log(Level.SEVERE, "Failed to load session id " + id, e);
+			logger.error("Failed to load session id " + id, e);
 			return manager.createSession(id);
 		}
 	}
@@ -237,7 +238,7 @@ public class RedisStore extends StoreBase implements Store {
 			@Override
 			public Void invoke(Jedis jedis) {
 				jedis.del(id);
-				log.info("Removed session id " + id);
+				logger.info("Removed session id " + id);
 				return null;
 			}
 		});
@@ -251,13 +252,13 @@ public class RedisStore extends StoreBase implements Store {
 		try {
 			hash = sessionSerializationHelper.serialize(session);
 		} catch (IOException e) {
-			log.log(Level.SEVERE, String.format("Unable to save session %s", session.getIdInternal()), e);
+			logger.error(String.format("Unable to save session %s", session.getIdInternal()), e);
 			return;
 		}
 
 		int sessionSize = hash.get(DATA_FIELD).length;
 		if (sessionSize < sessionEmptyLimit) {
-			log.log(Level.FINE, String.format("Session with id %s not saved since its size (%d B) is below sessionEmptyLimit",
+			logger.debug(String.format("Session with id %s not saved since its size (%d B) is below sessionEmptyLimit",
 					session.getIdInternal(),
 					sessionSize));
 			return;
@@ -276,13 +277,13 @@ public class RedisStore extends StoreBase implements Store {
 				}
 			});
 
-			log.info(String.format("Saved session with id %s In %d ms. Size: %d B",
+			logger.info(String.format("Saved session with id %s In %d ms. Size: %d B",
 					session.getIdInternal(),
 					System.currentTimeMillis() - start,
 					sessionSize));
 
 		} catch (JedisConnectionException e) {
-			log.log(Level.SEVERE, String.format("Unable to save session %s", session.getIdInternal()), e);
+			logger.error(String.format("Unable to save session %s", session.getIdInternal()), e);
 		}
 	}
 
@@ -320,7 +321,7 @@ public class RedisStore extends StoreBase implements Store {
 	private void setRedisSessionExpire(Session session, Jedis jedis) {
 		long expireAt = ((StandardSession) session).thisAccessedTime / 1000L + maxInactiveInterval;
 		jedis.expireAt(session.getIdInternal().getBytes(), expireAt);
-		log.info(String.format("Expire session with id %s at: %s",
+		logger.info(String.format("Expire session with id %s at: %s",
 				session.getIdInternal(),
 				expireDateFormat.format(new Date(expireAt * 1000L))));
 	}
