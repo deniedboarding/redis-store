@@ -3,16 +3,14 @@ package org.apache.catalina.session;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.exceptions.JedisConnectionException;
-
-import java.util.logging.Logger;
-
-import static java.util.logging.Level.WARNING;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 final class JedisTemplate {
 
     private final JedisPool jedisPool;
 
-    private final Logger logger = Logger.getLogger(this.getClass().getName());
+    private final Logger logger = LoggerFactory.getLogger(getClass());
 
     JedisTemplate(JedisPool jedisPool) {
         this.jedisPool = jedisPool;
@@ -37,7 +35,7 @@ final class JedisTemplate {
             try {
                 this.jedisPool.returnBrokenResource(jedis);
             } catch (RuntimeException e) {
-                this.logger.log(WARNING, "Exception encountered when returning broken Jedis resource", e);
+                this.logger.warn("Exception encountered when returning broken Jedis resource", e);
             }
         }
     }
@@ -47,7 +45,7 @@ final class JedisTemplate {
             try {
                 this.jedisPool.returnResource(jedis);
             } catch (RuntimeException e) {
-                this.logger.log(WARNING, "Exception encountered when returning Jedis resource", e);
+                this.logger.warn("Exception encountered when returning Jedis resource", e);
             }
         }
     }
