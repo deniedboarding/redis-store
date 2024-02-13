@@ -1,11 +1,6 @@
 package org.apache.catalina.session.test;
 
-import java.io.BufferedOutputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.ObjectOutputStream;
-import java.util.Map;
-
+import junit.framework.Assert;
 import org.apache.catalina.LifecycleException;
 import org.apache.catalina.Session;
 import org.apache.catalina.core.StandardContext;
@@ -14,60 +9,65 @@ import org.apache.catalina.session.RedisStore;
 import org.apache.catalina.session.SessionSerializationHelper;
 import org.apache.catalina.session.StandardSession;
 import org.apache.catalina.util.StandardSessionIdGenerator;
-import junit.framework.Assert;
-import org.junit.Before;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
 import org.junit.Test;
-
 import redis.clients.jedis.Jedis;
-import redis.clients.jedis.Protocol;
+import redis.embedded.RedisExecProvider;
+import redis.embedded.RedisServer;
+import redis.embedded.util.OS;
+
+import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.ObjectOutputStream;
+import java.util.Map;
 
 public class RedisStoreTest extends Assert {
-    private PersistentManager manager;
-    private RedisStore rs;
-    private SessionSerializationHelper sessionSerializationHelper = new SessionSerializationHelper(this.manager);
+    private static PersistentManager manager;
+    private static RedisStore rs;
+    private static RedisServer redisServer;
 
-    @Before
-    public void startUp() throws LifecycleException {
+    @BeforeClass
+    public static void startUp() throws LifecycleException {
+        redisServer = RedisServer.builder()
+                          .redisExecProvider(RedisExecProvider.defaultProvider().override(OS.MAC_OS_X, "/opt/homebrew/opt/redis/bin/redis-server"))
+                          .build();
+        redisServer.start();
+
         rs = new RedisStore();
-        rs.setDatabase(0);
-        rs.setHost("localhost");
-        rs.setPassword("foobared");
-        rs.setPort(Protocol.DEFAULT_PORT);
-
         manager = new PersistentManager();
         manager.setContext(new StandardContext());
         manager.setSessionIdGenerator(new StandardSessionIdGenerator());
         rs.setManager(manager);
-        rs.setSessionSerializationHelper(sessionSerializationHelper);
+        rs.setSessionSerializationHelper(new SessionSerializationHelper(manager));
+        rs.setSessionEmptyLimit(0);
         rs.start();
     }
 
+    @AfterClass
+    public static void shutDown() {
+        redisServer.stop();
+    }
+
     @Test
-    public void save() throws IOException, ClassNotFoundException {
+    public void save() throws IOException {
         Session session = new StandardSession(this.manager);
         session.setId("test-id");
-
-        rs.setSessionEmptyLimit(0);
         rs.save(session);
 
-        Jedis j = new Jedis("tcksalest1");
+        Jedis j = new Jedis();
         j.connect();
-        j.select(1);
-//        j.auth("foobared");
         Map<String, String> data = j.hgetAll(session.getId());
         j.quit();
         j.disconnect();
 
         assertNotNull(data);
-        ObjectOutputStream oos = null;
-        ByteArrayOutputStream bos = null;
 
-        bos = new ByteArrayOutputStream();
-        oos = new ObjectOutputStream(new BufferedOutputStream(bos));
+        ObjectOutputStream oos = new ObjectOutputStream(new BufferedOutputStream(new ByteArrayOutputStream()));
 
         ((StandardSession) session).writeObjectData(oos);
         oos.close();
-        oos = null;
         assertEquals(session.getId(), data.get("id"));
     }
 
@@ -77,6 +77,7 @@ public class RedisStoreTest extends Assert {
         ((StandardSession) savedSession).setAttribute("foo", "bar");
         rs.save(savedSession);
 
+        assertNotNull(savedSession.getId());
         Session loadedSession = rs.load(savedSession.getId());
 
         assertNotNull(loadedSession);
