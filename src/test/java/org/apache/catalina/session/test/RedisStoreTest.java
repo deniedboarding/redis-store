@@ -52,7 +52,7 @@ public class RedisStoreTest extends Assert {
 
     @Test
     public void save() throws IOException {
-        Session session = new StandardSession(this.manager);
+        StandardSession session = new StandardSession(manager);
         session.setId("test-id");
         rs.save(session);
 
@@ -66,7 +66,7 @@ public class RedisStoreTest extends Assert {
 
         ObjectOutputStream oos = new ObjectOutputStream(new BufferedOutputStream(new ByteArrayOutputStream()));
 
-        ((StandardSession) session).writeObjectData(oos);
+        session.writeObjectData(oos);
         oos.close();
         assertEquals(session.getId(), data.get("id"));
     }
