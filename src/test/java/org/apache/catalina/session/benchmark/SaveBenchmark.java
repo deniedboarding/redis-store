@@ -31,7 +31,7 @@ public class SaveBenchmark {
         rs.setPort(Protocol.DEFAULT_PORT);
 
         PersistentManager manager = new PersistentManager();
-        manager.setContainer(new StandardContext());
+        manager.setContext(new StandardContext());
 
         rs.setManager(manager);
 

@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.ObjectOutputStream;
 import java.util.Map;
 
+import org.apache.catalina.LifecycleException;
 import org.apache.catalina.Session;
 import org.apache.catalina.core.StandardContext;
 import org.apache.catalina.session.PersistentManager;
@@ -13,7 +14,7 @@ import org.apache.catalina.session.RedisStore;
 import org.apache.catalina.session.SessionSerializationHelper;
 import org.apache.catalina.session.StandardSession;
 import org.apache.catalina.util.StandardSessionIdGenerator;
-import org.junit.Assert;
+import junit.framework.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -26,18 +27,19 @@ public class RedisStoreTest extends Assert {
     private SessionSerializationHelper sessionSerializationHelper = new SessionSerializationHelper(this.manager);
 
     @Before
-    public void startUp() {
+    public void startUp() throws LifecycleException {
+        rs = new RedisStore();
         rs.setDatabase(0);
         rs.setHost("localhost");
         rs.setPassword("foobared");
         rs.setPort(Protocol.DEFAULT_PORT);
 
         manager = new PersistentManager();
-        manager.setContainer(new StandardContext());
+        manager.setContext(new StandardContext());
         manager.setSessionIdGenerator(new StandardSessionIdGenerator());
-        rs = new RedisStore();
         rs.setManager(manager);
         rs.setSessionSerializationHelper(sessionSerializationHelper);
+        rs.start();
     }
 
     @Test
@@ -48,9 +50,10 @@ public class RedisStoreTest extends Assert {
         rs.setSessionEmptyLimit(0);
         rs.save(session);
 
-        Jedis j = new Jedis("localhost");
+        Jedis j = new Jedis("tcksalest1");
         j.connect();
-        j.auth("foobared");
+        j.select(1);
+//        j.auth("foobared");
         Map<String, String> data = j.hgetAll(session.getId());
         j.quit();
         j.disconnect();
