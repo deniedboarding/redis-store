@@ -36,6 +36,7 @@ public class RedisStoreTest extends Assert {
         redisServer.start();
 
         rs = new RedisStore();
+        rs.setTls(false);
         manager = new PersistentManager();
         manager.setContext(new StandardContext());
         manager.setSessionIdGenerator(new StandardSessionIdGenerator());
@@ -59,7 +60,6 @@ public class RedisStoreTest extends Assert {
         Jedis j = new Jedis();
         j.connect();
         Map<String, String> data = j.hgetAll(session.getId());
-        j.quit();
         j.disconnect();
 
         assertNotNull(data);

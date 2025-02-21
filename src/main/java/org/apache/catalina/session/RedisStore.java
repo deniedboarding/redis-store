@@ -42,6 +42,10 @@ public class RedisStore extends StoreBase implements Store {
 	 */
 	private volatile int database = 0;
 	/**
+	 * Redis tls enabled
+	 */
+	private volatile boolean tls = true;
+	/**
 	 * Redis pool size
 	 */
 	private volatile int connectionPoolSize = -1;
@@ -142,6 +146,10 @@ public class RedisStore extends StoreBase implements Store {
 		this.jedisTemplate = jedisTemplate;
 	}
 
+	public void setTls(boolean tls) {
+		this.tls = tls;
+	}
+
 	public void setSessionSerializationHelper(SessionSerializationHelper sessionSerializationHelper) {
 		this.sessionSerializationHelper = sessionSerializationHelper;
 	}
@@ -174,8 +182,8 @@ public class RedisStore extends StoreBase implements Store {
 			return jedisTemplate.withJedis(new JedisTemplate.JedisOperation<Integer>() {
 				@Override
 				public Integer invoke(Jedis jedis) {
-					return jedis.dbSize().intValue();
-				}
+					return (int) jedis.dbSize();
+                }
 			});
 		} catch (JedisConnectionException e) {
 			throw new IOException(e);
@@ -303,7 +311,7 @@ public class RedisStore extends StoreBase implements Store {
 			poolConfig.setMinEvictableIdleTimeMillis(2000);
 			poolConfig.setTimeBetweenEvictionRunsMillis(10000);
 
-			pool = new JedisPool(poolConfig, host, port, Protocol.DEFAULT_TIMEOUT, password, database);
+			pool = new JedisPool(poolConfig, host, port, Protocol.DEFAULT_TIMEOUT, password, database,tls);
 
 			jedisTemplate = new JedisTemplate(pool);
 		}
